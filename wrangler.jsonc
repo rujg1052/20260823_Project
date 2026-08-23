@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "20260823-project",
+  "compatibility_date": "2026-08-20",
+  "main": "worker.js",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "exclude": ["worker.js", "wrangler.jsonc", ".assetsignore", ".gitignore", ".git/**"]
+  }
+}
