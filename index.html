@@ -858,7 +858,10 @@ function draw(){
   const showBuildings = ppm > 0.12 && anyLoadedBboxIntersectsView(40);
 
   if(showHeat) drawDistanceHeatmap();
-  if(showHeat){ drawAreas(); drawRoads(); }
+  // 건물이 보이는 줌 레벨인데 역세권 히트맵은 아직 안 켜지는 좁은 구간이 있었다 — 그 구간에서는 길·수역·공원 없이
+  // 건물만 텅 빈 바닥 위에 떠 있는 것처럼 보였다("관이 연결된 것처럼 보인다"는 문제의 원인). 건물이 보이면 항상
+  // 길·수역·공원도 함께 그려서, 마치 일반 지도를 바닥에 깔아둔 것처럼 건물이 그 위에 서 있게 한다.
+  if(showHeat || showBuildings){ drawAreas(); drawRoads(); }
 
   if(showGu && !showDong){ drawPolyLayer(SEOUL_GU, 0, 0.55, null, cssColor('--coast'), 1); }
   if(showDong){ drawPolyLayer(SEOUL_DONG, 0, 0.45, null, cssColor('--coast'), 1); }
@@ -1044,6 +1047,7 @@ function buildingLOD(candidates){
 }
 function drawFlatBuildingFootprint(b){
   const base = groupColor(b.g);
+  const edge = darken(base, 0.5);
   for(const ring of b.f){
     const pts = ring.map(([lon,lat])=>project3(lon,lat,0));
     ctx.beginPath();
@@ -1051,6 +1055,8 @@ function drawFlatBuildingFootprint(b){
     ctx.closePath();
     ctx.fillStyle = base;
     ctx.fill();
+    // 테두리가 없으면 완전 위(pitch 0)에서 봤을 때 같은 색 건물끼리 경계 없이 뭉쳐 보인다 — 얇은 테두리로 구분한다.
+    ctx.lineWidth=1; ctx.strokeStyle=edge; ctx.globalAlpha=0.5; ctx.stroke(); ctx.globalAlpha=1;
   }
 }
 const BUILDING_DETAIL_MAX = 3000;
@@ -1104,9 +1110,11 @@ function drawBuildings(){
       }
 
       const wall = darken(base, 0.35);
+      const edge = darken(base, 0.55); // 지붕·벽 테두리용 — 인접 건물이 같은 색이어도 경계가 보이게 한다.
 
       if(heightPx>1.2){
         ctx.fillStyle = wall;
+        ctx.strokeStyle = edge; ctx.lineWidth = 1;
         for(let i=0;i<ground.length;i++){
           const j=(i+1)%ground.length;
           ctx.beginPath();
@@ -1114,7 +1122,9 @@ function drawBuildings(){
           ctx.lineTo(ground[j].x, ground[j].y);
           ctx.lineTo(roof[j].x, roof[j].y);
           ctx.lineTo(roof[i].x, roof[i].y);
-          ctx.closePath(); ctx.fill();
+          ctx.closePath();
+          ctx.fill();
+          ctx.globalAlpha=0.5; ctx.stroke(); ctx.globalAlpha=1;
         }
       }
       ctx.beginPath();
@@ -1122,8 +1132,11 @@ function drawBuildings(){
       ctx.closePath();
       ctx.fillStyle = base;
       ctx.fill();
+      // 완전 위에서 내려다볼 때(pitch 0)는 벽이 화면에 드러나지 않아 지붕 색만 보이므로, 테두리가 없으면
+      // 같은 색 건물끼리 뭉쳐 하나로 보인다 — 선택/역세권 강조가 아닌 평소에도 옅은 테두리를 항상 그린다.
       if(selectedBuilding){ ctx.lineWidth=2; ctx.strokeStyle=cssColor('--text'); ctx.stroke(); }
       else if(b.s){ ctx.lineWidth=1; ctx.strokeStyle=cssColor('--dist-near'); ctx.globalAlpha=0.6; ctx.stroke(); ctx.globalAlpha=1; }
+      else { ctx.lineWidth=1; ctx.strokeStyle=edge; ctx.globalAlpha=0.55; ctx.stroke(); ctx.globalAlpha=1; }
     }
   }
 }
