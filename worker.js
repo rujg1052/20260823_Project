@@ -4,33 +4,37 @@
  * 정적 파일(index.html 등)은 그대로 서빙하고,
  * /api/vworld/* 로 오는 요청만 VWorld(브이월드) API로 프록시합니다.
  *
- * 이렇게 서버(Worker) 쪽에서 대신 호출하는 이유:
- *  1) VWorld 인증키(VWORLD_KEY)를 브라우저에 노출하지 않기 위해
- *  2) VWorld API의 도메인 화이트리스트 정책을 이 Worker의 배포 도메인
- *     하나로만 등록하면 되도록 하기 위해
- *
  * 사용 전 준비물:
- *  - Cloudflare 대시보드 > Workers & Pages > 20260823-project > Settings
+ *  - Cloudflare 대시보드 > Workers & Pages > 프로젝트 > Settings
  *    > Variables and Secrets 에서 VWORLD_KEY 시크릿 등록
- *  - vworld.kr에서 발급받은 인증키를 그 값으로 넣기
- *  - 인증키 신청 시 "사용 도메인"에 이 Worker의 배포 주소
- *    (예: 20260823-project.rujg1052.workers.dev)를 등록
  */
 
 export default {
   async fetch(request, env, ctx) {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
-    if (url.pathname.startsWith("/api/vworld/")) {
-      return handleVWorldProxy(request, env, url);
+      if (url.pathname.startsWith("/api/vworld/")) {
+        return await handleVWorldProxy(url, env);
+      }
+
+      return await env.ASSETS.fetch(request);
+    } catch (err) {
+      // 어떤 예외가 나든 원인을 알 수 있게 그대로 보여준다
+      return jsonResponse(
+        {
+          error: "Worker 최상위 예외",
+          name: err && err.name,
+          message: err && err.message,
+          stack: err && err.stack,
+        },
+        500
+      );
     }
-
-    // 그 외 모든 요청은 정적 파일(index.html 등)로 서빙
-    return env.ASSETS.fetch(request);
   },
 };
 
-async function handleVWorldProxy(request, env, url) {
+async function handleVWorldProxy(url, env) {
   const key = env.VWORLD_KEY;
 
   if (!key) {
@@ -43,7 +47,7 @@ async function handleVWorldProxy(request, env, url) {
     );
   }
 
-  // /api/vworld/req/address  ->  https://api.vworld.kr/req/address
+  // /api/vworld/req/search  ->  https://api.vworld.kr/req/search
   const vworldPath = url.pathname.replace(/^\/api\/vworld/, "");
   const vworldUrl = new URL("https://api.vworld.kr" + vworldPath);
 
@@ -52,35 +56,34 @@ async function handleVWorldProxy(request, env, url) {
   }
   vworldUrl.searchParams.set("key", key);
 
-  // VWorld는 인증키를 "등록 도메인" 기준으로 검증하는데, 이 요청은 서버(Worker)에서
-  // 보내는 거라 브라우저처럼 자동으로 Referer가 붙지 않는다. 등록해둔 배포 도메인을
-  // Referer/Origin으로 명시적으로 실어 보낸다.
-  const registeredOrigin = `https://${url.hostname}`;
-
+  let upstream;
   try {
-    const upstream = await fetch(vworldUrl.toString(), {
-      headers: {
-        Accept: "application/json",
-        Referer: registeredOrigin + "/",
-        Origin: registeredOrigin,
-      },
-      cf: { cacheTtl: 300, cacheEverything: true },
-    });
-    const body = await upstream.text();
-
-    return new Response(body, {
-      status: upstream.status,
-      headers: {
-        "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, max-age=300",
-        "X-Debug-Upstream-Status": String(upstream.status),
-        "X-Debug-Upstream-Url": vworldUrl.toString().replace(key, "***"),
-      },
-    });
+    upstream = await fetch(vworldUrl.toString());
   } catch (err) {
-    return jsonResponse({ error: "VWorld 요청 실패(네트워크/예외)", detail: String(err) }, 502);
+    // fetch() 자체가 실패한 경우 (네트워크/연결 문제) - 정확한 원인 표시
+    return jsonResponse(
+      {
+        error: "VWorld로의 요청 자체가 실패했습니다 (네트워크 레벨)",
+        name: err && err.name,
+        message: err && err.message,
+        cause: err && err.cause ? String(err.cause) : undefined,
+        vworldUrl: vworldUrl.toString().replace(key, "***"),
+      },
+      502
+    );
   }
+
+  const body = await upstream.text();
+
+  return new Response(body, {
+    status: upstream.status,
+    headers: {
+      "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, max-age=300",
+      "X-Debug-Upstream-Status": String(upstream.status),
+    },
+  });
 }
 
 function jsonResponse(obj, status) {
