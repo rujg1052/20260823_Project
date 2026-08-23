@@ -982,14 +982,17 @@ function draw(){
 
   // provinces base
   drawPolyLayer(PROVINCES, 1, 0.9, cssColor('--sphere-a'), cssColor('--rule'), 1);
-  // 지형 기복(근사) — 평평한 땅 색 위에 고도별 색+음영으로 덮어 그린다. 역세권 히트맵이 켜지면 그 위를
-  // 불투명하게 덮어버리므로(의도적으로 그렇게 만들었다), 지형은 주로 건물이 보이기 전, 도시 전체를 둘러볼 때 드러난다.
-  drawTerrainMesh();
 
   const showGu = view.scale > fitScale*3.2;
   const showDong = view.scale > fitScale*14;
   const showHeat = view.scale > fitScale*6 && anyLoadedBboxIntersectsView(900);
   const showBuildings = ppm > 0.12 && anyLoadedBboxIntersectsView(40);
+
+  // 지형 기복(근사) — 평평한 땅 색 위에 고도별 색+음영으로 덮어 그린다. 역세권 히트맵이 켜지면 그 위를
+  // 불투명하게 덮어버리므로(의도적으로 그렇게 만들었다), 지형은 주로 건물이 보이기 전, 도시 전체를 둘러볼 때 드러난다.
+  // 히트맵이 켜진 상태에서는 지형이 화면에 전혀 안 보이므로(완전히 덮여서), 계산 자체를 건너뛴다 — 건물 많은
+  // 확대 화면에서 안 그래도 느린데 안 보이는 지형까지 매 프레임 계산할 이유가 없다.
+  if(!showHeat) drawTerrainMesh();
 
   if(showHeat) drawDistanceHeatmap();
   // 건물이 보이는 줌 레벨인데 역세권 히트맵은 아직 안 켜지는 좁은 구간이 있었다 — 그 구간에서는 길·수역·공원 없이
@@ -1198,7 +1201,7 @@ function drawFlatBuildingFootprint(b, edgeBatches){
     (edgeBatches[b.g] || (edgeBatches[b.g]=[])).push(pts);
   }
 }
-const BUILDING_DETAIL_MAX = 3000;
+const BUILDING_DETAIL_MAX = 1200;
 function drawBuildings(){
   const ppm = currentPxPerMeter();
   const candidates = visibleBuildings();
@@ -1239,6 +1242,8 @@ function drawBuildings(){
   // 지붕 테두리를 건물마다 즉시 stroke()하면(수천 개) 캔버스 호출 자체가 큰 병목이 된다 — 그래서 일반
   // 건물의 테두리는 그룹(용도)별로 모아뒀다가 맨 마지막에 그룹당 한 번씩만 stroke()한다. 선택된 건물·검색
   // 강조 건물처럼 색이 특별한 경우만 그 자리에서 바로 그린다(수가 아주 적어서 문제되지 않는다).
+  // (주의: 그림자·벽·지붕은 건물마다 "겹쳐 그려지는 순서"가 화면에 그대로 보이기 때문에 — 인접 건물끼리
+  // 앞뒤로 가려야 할 부분이 있음 — 그룹별로 한꺼번에 묶어서 나중에 그리면 안 된다.)
   const roofEdgeBatches = {};
   for(const {b} of items){
     const selectedBuilding = state.selection && state.selection.type==='building' && state.selection.b===b;
@@ -1265,14 +1270,12 @@ function drawBuildings(){
         }
       }
 
-      const wall = darken(base, 0.35);
-      const edge = darken(base, 0.55); // 지붕 테두리용 — 인접 건물이 같은 색이어도 경계가 보이게 한다.
-
       // 벽면(옆면) 자체는 지붕보다 어둡게 채워서 이미 옆 건물과 구분되고, 기울인 화면에서는 원근상 잘 보이지
-      // 않는 부분이라 개별 사각형마다 테두리(stroke)를 긋지 않는다 — 그렇게 하면 건물이 조금만 많아져도
-      // 매우 느려진다(사각형 하나당 stroke 호출이 하나씩 더 붙는 셈이라 배 이상 느려짐).
+      // 않는 부분이라 개별 사각형마다 테두리(stroke)를 긋지 않는다. (사각형들을 하나의 path로 묶어서
+      // fill 호출을 줄이는 것도 시도해봤지만, 건물 앞면·뒷면 벽이 화면에서 겹칠 때 nonzero 채우기 규칙 때문에
+      // 겹친 부분에 구멍이 뚫려 보이는 문제가 있어 안전하게 사각형마다 개별 fill()로 되돌렸다.)
       if(heightPx>1.2){
-        ctx.fillStyle = wall;
+        ctx.fillStyle = darken(base, 0.35);
         for(let i=0;i<ground.length;i++){
           const j=(i+1)%ground.length;
           ctx.beginPath();
@@ -1430,6 +1433,16 @@ function convexHull(points){
 }
 
 /* =================== 인터랙션 =================== */
+// 휠(특히 트랙패드)이나 드래그는 짧은 시간에 이벤트가 아주 많이 들어온다 — 이벤트마다 매번 즉시 draw()를
+// 동기 호출하면, draw() 한 번이 오래 걸릴 때(건물 많은 화면 등) 이벤트가 뒤에 계속 쌓여서 화면이 실제
+// 입력보다 한참 뒤처지게 된다(트랙패드로 확대할 때 "먹통"처럼 느껴지는 원인). 그래서 상태(view/camera)는
+// 이벤트마다 바로 갱신하되, 실제 화면을 다시 그리는 것(draw())만 애니메이션 프레임당 한 번으로 모아준다.
+let _drawScheduled = false;
+function requestDraw(){
+  if(_drawScheduled) return;
+  _drawScheduled = true;
+  requestAnimationFrame(()=>{ _drawScheduled = false; draw(); });
+}
 canvas.addEventListener('contextmenu', (e)=> e.preventDefault());
 canvas.addEventListener('pointerdown', (e)=>{
   canvas.setPointerCapture(e.pointerId);
@@ -1449,7 +1462,7 @@ canvas.addEventListener('pointermove', (e)=>{
     view.lon -= X/(view.scale*COS_REF);
     view.lat += Y/view.scale;
   }
-  draw();
+  requestDraw();
 });
 window.addEventListener('pointerup', (e)=>{
   if(!state.dragging) return;
@@ -1469,7 +1482,7 @@ canvas.addEventListener('wheel', (e)=>{
   view.scale = Math.max(fitScale, Math.min(fitScale*2200, view.scale*f));
   const after = screenToLonLat(sx,sy);
   view.lon += before.lon-after.lon; view.lat += before.lat-after.lat;
-  draw();
+  requestDraw();
 }, {passive:false});
 
 function zoomBy(f){
