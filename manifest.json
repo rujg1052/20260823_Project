@@ -1,1 +1,46 @@
-[]
+[
+  {
+    "id": "jongno",
+    "name": "종로구",
+    "bbox": {
+      "minLon": 126.9515,
+      "maxLon": 127.0255,
+      "minLat": 37.5631,
+      "maxLat": 37.6295
+    },
+    "file": "data/jongno.json"
+  },
+  {
+    "id": "jung",
+    "name": "중구",
+    "bbox": {
+      "minLon": 126.9636,
+      "maxLon": 127.0288,
+      "minLat": 37.541,
+      "maxLat": 37.5689
+    },
+    "file": "data/jung.json"
+  },
+  {
+    "id": "yongsan",
+    "name": "용산구",
+    "bbox": {
+      "minLon": 126.9457,
+      "maxLon": 127.023,
+      "minLat": 37.5093,
+      "maxLat": 37.5522
+    },
+    "file": "data/yongsan.json"
+  },
+  {
+    "id": "seongdong",
+    "name": "성동구",
+    "bbox": {
+      "minLon": 127.0104,
+      "maxLon": 127.0758,
+      "minLat": 37.5263,
+      "maxLat": 37.5702
+    },
+    "file": "data/seongdong.json"
+  }
+]
