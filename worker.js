@@ -1,97 +1,63 @@
 /**
  * 해시계 지구본 - Cloudflare Worker
  *
- * 정적 파일(index.html 등)은 그대로 서빙하고,
- * /api/vworld/* 로 오는 요청만 VWorld(브이월드) API로 프록시합니다.
- *
- * 사용 전 준비물:
- *  - Cloudflare 대시보드 > Workers & Pages > 프로젝트 > Settings
- *    > Variables and Secrets 에서 VWORLD_KEY 시크릿 등록
+ * /api/ping          -> VWorld와 무관한 외부 사이트(example.com)로 프록시 (진단용)
+ * /api/vworld/*       -> VWorld(브이월드) API로 프록시
+ * 그 외 모든 요청     -> 정적 파일(index.html 등)
  */
 
 export default {
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+
     try {
-      const url = new URL(request.url);
+      if (url.pathname === "/api/ping") {
+        return await proxyMinimal("https://example.com/");
+      }
 
       if (url.pathname.startsWith("/api/vworld/")) {
-        return await handleVWorldProxy(url, env);
+        const key = env.VWORLD_KEY;
+        if (!key) {
+          return textResponse("VWORLD_KEY_NOT_SET", 500);
+        }
+        const vworldPath = url.pathname.replace(/^\/api\/vworld/, "");
+        const target = new URL("https://api.vworld.kr" + vworldPath);
+        for (const [k, v] of url.searchParams) target.searchParams.set(k, v);
+        target.searchParams.set("key", key);
+        return await proxyMinimal(target.toString());
       }
 
       return await env.ASSETS.fetch(request);
     } catch (err) {
-      // 어떤 예외가 나든 원인을 알 수 있게 그대로 보여준다
-      return jsonResponse(
-        {
-          error: "Worker 최상위 예외",
-          name: err && err.name,
-          message: err && err.message,
-          stack: err && err.stack,
-        },
-        500
-      );
+      return textResponse("TOP_LEVEL_EXCEPTION: " + (err && err.stack ? err.stack : String(err)), 500);
     }
   },
 };
 
-async function handleVWorldProxy(url, env) {
-  const key = env.VWORLD_KEY;
-
-  if (!key) {
-    return jsonResponse(
-      {
-        error: "VWORLD_KEY가 설정되지 않았습니다.",
-        hint: "Cloudflare 대시보드 > Workers & Pages > 프로젝트 > Settings > Variables and Secrets 에서 VWORLD_KEY를 추가하세요.",
-      },
-      500
-    );
-  }
-
-  // /api/vworld/req/search  ->  https://api.vworld.kr/req/search
-  const vworldPath = url.pathname.replace(/^\/api\/vworld/, "");
-  const vworldUrl = new URL("https://api.vworld.kr" + vworldPath);
-
-  for (const [k, v] of url.searchParams) {
-    vworldUrl.searchParams.set(k, v);
-  }
-  vworldUrl.searchParams.set("key", key);
-
+// 최대한 단순하게: 상태코드 + 본문 앞부분만 텍스트로 그대로 반환.
+// 헤더 복사, JSON 파싱 등 실패할 수 있는 요소를 전부 제거해서
+// 정확히 어느 단계에서 실패하는지 알 수 있게 한다.
+async function proxyMinimal(targetUrl) {
   let upstream;
   try {
-    upstream = await fetch(vworldUrl.toString());
+    upstream = await fetch(targetUrl);
   } catch (err) {
-    // fetch() 자체가 실패한 경우 (네트워크/연결 문제) - 정확한 원인 표시
-    return jsonResponse(
-      {
-        error: "VWorld로의 요청 자체가 실패했습니다 (네트워크 레벨)",
-        name: err && err.name,
-        message: err && err.message,
-        cause: err && err.cause ? String(err.cause) : undefined,
-        vworldUrl: vworldUrl.toString().replace(key, "***"),
-      },
-      502
-    );
+    return textResponse("FETCH_THREW: " + (err && err.stack ? err.stack : String(err)), 502);
   }
 
-  const body = await upstream.text();
+  let body;
+  try {
+    body = await upstream.text();
+  } catch (err) {
+    return textResponse("TEXT_THREW: status=" + upstream.status + " " + (err && err.stack ? err.stack : String(err)), 502);
+  }
 
-  return new Response(body, {
-    status: upstream.status,
-    headers: {
-      "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
-      "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "public, max-age=300",
-      "X-Debug-Upstream-Status": String(upstream.status),
-    },
-  });
+  return textResponse("STATUS=" + upstream.status + "\n\n" + body.slice(0, 3000), 200);
 }
 
-function jsonResponse(obj, status) {
-  return new Response(JSON.stringify(obj, null, 2), {
+function textResponse(text, status) {
+  return new Response(text, {
     status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Access-Control-Allow-Origin": "*",
-    },
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Access-Control-Allow-Origin": "*" },
   });
 }
