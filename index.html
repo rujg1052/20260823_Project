@@ -135,7 +135,7 @@
   .stage-legend .row{ display:flex; align-items:center; gap:7px; margin:3px 0; }
   .swatch{ width:11px; height:11px; border-radius:2px; flex:none; }
   .stage-legend .title{ font-size:.68rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:5px; }
-  .heat-bar{ height:8px; border-radius:4px; background: linear-gradient(90deg, var(--dist-near), #8fae7a, var(--dist-far)); }
+  .heat-bar{ height:8px; border-radius:4px; background: linear-gradient(90deg, var(--dist-near), var(--dist-far)); }
 
   .icon-btn{ width:36px; height:36px; border-radius:3px; border:1px solid var(--rule);
     background: color-mix(in srgb, var(--surface) 92%, transparent); color: var(--text);
@@ -235,7 +235,7 @@
         <div class="title">역까지 도보 거리</div>
         <div class="heat-bar"></div>
         <div class="row" style="justify-content:space-between; font-size:.68rem; color:var(--muted);">
-          <span>가까움</span><span>1.3km+</span>
+          <span>역 바로 앞</span><span>500m+</span>
         </div>
         <div class="title" style="margin-top:9px;">건물 유형</div>
         <div class="row"><span class="swatch" style="background:var(--res);"></span>아파트·주거</div>
@@ -579,21 +579,23 @@ function visibleAreas(){ return queryIndex(areaIndex, getViewportLonLatBounds(15
 
 /* =================== 상태 =================== */
 let fitScale = 100;
+// 지금은 서울만 보이도록 범위를 제한한다(다른 지역 데이터가 없어서, 일단은) — 그래서 전국(PROVINCES)이
+// 아니라 서울시 25개구 경계(SEOUL_GU) 전체를 기준으로 초기 화면 범위·팬(이동) 제한을 계산한다.
 const bbox = (function(){
   let minLon=999,maxLon=-999,minLat=999,maxLat=-999;
-  for(const p of PROVINCES) for(const ring of p.r) for(const [lon,lat] of ring){
+  for(const g of SEOUL_GU) for(const ring of g.r) for(const [lon,lat] of ring){
     if(lon<minLon)minLon=lon; if(lon>maxLon)maxLon=lon; if(lat<minLat)minLat=lat; if(lat>maxLat)maxLat=lat;
   }
   return {minLon,maxLon,minLat,maxLat};
 })();
-const KOREA_CENTER = { lon:(bbox.minLon+bbox.maxLon)/2, lat:(bbox.minLat+bbox.maxLat)/2 };
+const SEOUL_CENTER = { lon:(bbox.minLon+bbox.maxLon)/2, lat:(bbox.minLat+bbox.maxLat)/2 };
 const MAPO_CENTER = { lon:(MAPO_BBOX.minLon+MAPO_BBOX.maxLon)/2, lat:(MAPO_BBOX.minLat+MAPO_BBOX.maxLat)/2 };
 
 // 지금까지 데이터가 준비된(내장 또는 로딩 완료) 구들의 bbox 목록 — "건물/역세권 레이어를 이 근처에서 켤지" 판단에 쓰인다.
 // 마포구는 이 파일에 내장돼 있으므로 처음부터 포함된다.
 let loadedBboxes = [MAPO_BBOX];
 
-const view = { lon: KOREA_CENTER.lon, lat: KOREA_CENTER.lat, scale: 100 };
+const view = { lon: SEOUL_CENTER.lon, lat: SEOUL_CENTER.lat, scale: 100 };
 const state = {
   selection: null, // {type:'building', b:...} or {type:'pin', lat, lon, region}
   live: true,
@@ -620,6 +622,16 @@ function resizeCanvas(first){
   draw();
 }
 window.addEventListener('resize', ()=>resizeCanvas(false));
+
+// 지금은 서울 범위만 데이터가 있으므로, 팬(드래그 이동)·줌아웃으로 다른 지역(경기도 등)까지 벗어나지 못하게 막는다.
+// PAN_MARGIN_DEG만큼은 경계 바로 바깥까지 살짝 더 보이게 해서 딱 붙어 막히는 답답함은 줄인다.
+// draw() 맨 앞에서 항상 호출하므로, 드래그·휠줌·검색 이동·현재위치 등 view를 바꾸는 모든 경로에 일괄 적용된다.
+const PAN_MARGIN_DEG = 0.05;
+function clampView(){
+  view.scale = Math.max(fitScale, view.scale);
+  view.lon = Math.min(bbox.maxLon+PAN_MARGIN_DEG, Math.max(bbox.minLon-PAN_MARGIN_DEG, view.lon));
+  view.lat = Math.min(bbox.maxLat+PAN_MARGIN_DEG, Math.max(bbox.minLat-PAN_MARGIN_DEG, view.lat));
+}
 
 // getComputedStyle 호출은 비용이 꽤 커서, 건물이 많을 때 매 건물마다 부르면 성능이 확 떨어진다.
 // 프레임(한 번의 draw() 호출) 동안은 테마가 바뀌지 않는다고 보고 값을 캐시해뒀다가 다음 프레임 시작 시 비운다.
@@ -826,6 +838,7 @@ function drawPolyLayer(list, fillA, strokeA, fillColor, strokeColor, lw){
 }
 
 function draw(){
+  clampView();
   _cssColorCache.clear();
   const w=canvas.width, h=canvas.height;
   ctx.save();
@@ -894,7 +907,9 @@ function hexToRgb(hex){
 function lerpRgb(a,b,t){
   return { r:Math.round(a.r+(b.r-a.r)*t), g:Math.round(a.g+(b.g-a.g)*t), b:Math.round(a.b+(b.b-a.b)*t) };
 }
-const DIST_BANDS_M = [1400,1200,1000,850,700,550,420,300,200,120];
+// 역 바로 앞(0m)은 완전한 파란색, 500m 이상 떨어지면 완전한 빨간색이 되도록 만든다.
+const HEAT_MAX_M = 500;
+const DIST_BANDS_M = [500,450,400,350,300,250,200,150,110,75,45,20];
 const HEAT_RING_STEPS = 40;
 // world-space circle (meters) around a station, sampled as lon/lat points so it renders correctly under any camera tilt/rotation
 function heatRingLonLat(s, radiusM){
@@ -909,9 +924,14 @@ function heatRingLonLat(s, radiusM){
 function drawDistanceHeatmap(){
   const near = hexToRgb(cssColor('--dist-near'));
   const far = hexToRgb(cssColor('--dist-far'));
-  const MAXD = DIST_BANDS_M[0];
+
+  // 역에서 HEAT_MAX_M(500m) 넘게 떨어진 곳은 전부 완전한 빨간색이 되도록, 화면 전체를 먼저 far색으로 깔아둔다.
+  // (translate/scale만 적용된 좌표계라 아주 큰 사각형이면 카메라 회전·기울기와 무관하게 화면을 항상 덮는다.)
+  ctx.fillStyle = `rgb(${far.r},${far.g},${far.b})`;
+  ctx.fillRect(-100000,-100000,200000,200000);
+
   for(const d of DIST_BANDS_M){
-    const c = lerpRgb(near, far, Math.min(1, d/MAXD));
+    const c = lerpRgb(near, far, Math.min(1, d/HEAT_MAX_M));
     ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
     ctx.beginPath();
     for(const s of STATIONS){
@@ -985,40 +1005,68 @@ function drawRoads(){
 
 function groupColor(g){ return cssColor('--'+g); }
 
-function buildingDepthSortedList(){
-  return visibleBuildings().map(b=>{
+function buildingDepthSortedList(list){
+  return (list || visibleBuildings()).map(b=>{
     const ring = b.f[0];
     let sy=0,sx=0; for(const [lon,lat] of ring){ const p=project3(lon,lat,0); sx+=p.x; sy+=p.y; }
     return { b, cy: sy/ring.length };
   }).sort((a,b2)=>a.cy-b2.cy);
 }
 
-// 화면에 걸리는 건물이 너무 많으면(넓게 확대한 상태) 벽 돌출·그림자 계산을 생략하고 평평한 색 지붕만 그린다.
-// 이렇게 하면 데이터 규모가 커도 한 프레임에 그리는 비용이 일정 수준 이상으로 튀지 않는다.
-const BUILDING_DETAIL_MAX = 2500;
+function buildingCentroidLonLat(b){
+  if(b._c) return b._c;
+  const ring = b.f[0];
+  let sx=0, sy=0;
+  for(const [lon,lat] of ring){ sx+=lon; sy+=lat; }
+  const c = [sx/ring.length, sy/ring.length];
+  b._c = c;
+  return c;
+}
+
+// 화면에 걸리는 건물이 너무 많으면(넓게 확대한 상태) 전부 벽 돌출·그림자까지 그리는 건 무겁다.
+// 예전에는 "화면에 보이는 건물 총합"이 기준(BUILDING_DETAIL_MAX)을 넘는 순간 화면 전체가 한꺼번에 평면으로
+// 바뀌어 버려서, 조금만 축소해도(예: 공덕역 부근) 입체감이 통째로 사라지는 문제가 있었다.
+// 지금은 지금 보고 있는 지점(화면 중심 = view.lon/lat)에서 가까운 건물부터 우선순위를 매겨 가까운
+// BUILDING_DETAIL_MAX개까지만 입체로 그리고, 그보다 먼(화면 가장자리) 건물만 바닥 다각형으로 단순화한다 —
+// 그래서 지금 보고 있는 곳 주변은 항상 3D로 남고, 개수가 넘칠 때만 화면 바깥쪽부터 서서히 평면으로 바뀐다.
+function buildingLOD(candidates){
+  if(candidates.length <= BUILDING_DETAIL_MAX) return { detailSet: candidates, flatSet: [] };
+  const withDist = candidates.map(b=>{
+    const c = buildingCentroidLonLat(b);
+    const dLon = (c[0]-view.lon)*COS_REF, dLat = (c[1]-view.lat);
+    return { b, d2: dLon*dLon + dLat*dLat };
+  });
+  withDist.sort((x,y)=>x.d2-y.d2);
+  return {
+    detailSet: withDist.slice(0, BUILDING_DETAIL_MAX).map(x=>x.b),
+    flatSet: withDist.slice(BUILDING_DETAIL_MAX).map(x=>x.b),
+  };
+}
+function drawFlatBuildingFootprint(b){
+  const base = groupColor(b.g);
+  for(const ring of b.f){
+    const pts = ring.map(([lon,lat])=>project3(lon,lat,0));
+    ctx.beginPath();
+    pts.forEach((p,i)=> i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.closePath();
+    ctx.fillStyle = base;
+    ctx.fill();
+  }
+}
+const BUILDING_DETAIL_MAX = 3000;
 function drawBuildings(){
   const ppm = currentPxPerMeter();
   const candidates = visibleBuildings();
-  const detailMode = candidates.length <= BUILDING_DETAIL_MAX;
+  const { detailSet, flatSet } = buildingLOD(candidates);
 
-  if(!detailMode){
-    // 저비용 경로: 지붕 높이 투영·벽 돌출·그림자 컨벡스헐 계산과 개별 깊이정렬을 모두 생략하고 바닥 색 다각형만 채운다.
-    for(const b of candidates){
-      const base = groupColor(b.g);
-      for(const ring of b.f){
-        const pts = ring.map(([lon,lat])=>project3(lon,lat,0));
-        ctx.beginPath();
-        pts.forEach((p,i)=> i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
-        ctx.closePath();
-        ctx.fillStyle = base;
-        ctx.fill();
-      }
-    }
-    return;
+  if(flatSet.length){
+    // 화면 가장자리의, 지금 보고 있는 지점에서 먼 건물들: 벽 돌출·그림자 계산 없이 바닥 색 다각형만 채운다.
+    for(const b of flatSet) drawFlatBuildingFootprint(b);
   }
+  if(!detailSet.length) return;
 
   // sort by base centroid y (screen) ascending: farther (top) first
-  const items = buildingDepthSortedList();
+  const items = buildingDepthSortedList(detailSet);
 
   const now = state.live ? new Date() : state.sliderDate;
   let sun = null;
@@ -1238,14 +1286,14 @@ canvas.addEventListener('wheel', (e)=>{
   const sx = e.clientX-rect.left-rect.width/2, sy=e.clientY-rect.top-rect.height/2;
   const before = screenToLonLat(sx,sy);
   const f = Math.exp(-e.deltaY*0.001);
-  view.scale = Math.max(fitScale*0.8, Math.min(fitScale*2200, view.scale*f));
+  view.scale = Math.max(fitScale, Math.min(fitScale*2200, view.scale*f));
   const after = screenToLonLat(sx,sy);
   view.lon += before.lon-after.lon; view.lat += before.lat-after.lat;
   draw();
 }, {passive:false});
 
 function zoomBy(f){
-  view.scale = Math.max(fitScale*0.8, Math.min(fitScale*2200, view.scale*f));
+  view.scale = Math.max(fitScale, Math.min(fitScale*2200, view.scale*f));
   draw();
 }
 document.getElementById('btnZoomIn').addEventListener('click', ()=>zoomBy(1.35));
@@ -1284,18 +1332,28 @@ function handleClick(sx,sy){
   const ppm = currentPxPerMeter();
   const showBuildings = ppm > 0.12 && anyLoadedBboxIntersectsView(40);
   if(showBuildings){
-    // hit-test in screen space (roof silhouette), checking frontmost (largest depth) first to match what's drawn on top
-    const items = buildingDepthSortedList();
-    const detailMode = items.length <= BUILDING_DETAIL_MAX;
+    // hit-test in screen space (roof silhouette), checking frontmost (largest depth) first to match what's drawn on top.
+    // 입체로 그려진(가까운) 건물부터 지붕 기준으로 먼저 검사하고, 못 찾으면 화면 가장자리의 평면 처리된 건물을 바닥 기준으로 검사한다.
+    const { detailSet, flatSet } = buildingLOD(visibleBuildings());
+    const items = buildingDepthSortedList(detailSet);
     let hit=null;
     for(let i=items.length-1;i>=0;i--){
       const b = items[i].b;
-      const heightPx = detailMode ? b.h*ppm : 0; // 저비용 모드에서는 바닥 다각형만 그려지므로 판정도 바닥 기준으로 맞춘다
+      const heightPx = b.h*ppm;
       for(const ring of b.f){
         const roofPts = ring.map(([lon,lat])=>project3(lon,lat,heightPx));
         if(pointInPolyXY(sx,sy,roofPts)){ hit=b; break; }
       }
       if(hit) break;
+    }
+    if(!hit){
+      for(const b of flatSet){
+        for(const ring of b.f){
+          const pts = ring.map(([lon,lat])=>project3(lon,lat,0));
+          if(pointInPolyXY(sx,sy,pts)){ hit=b; break; }
+        }
+        if(hit) break;
+      }
     }
     if(hit){ selectBuilding(hit); return; }
   }
