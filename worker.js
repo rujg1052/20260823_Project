@@ -52,9 +52,18 @@ async function handleVWorldProxy(request, env, url) {
   }
   vworldUrl.searchParams.set("key", key);
 
+  // VWorld는 인증키를 "등록 도메인" 기준으로 검증하는데, 이 요청은 서버(Worker)에서
+  // 보내는 거라 브라우저처럼 자동으로 Referer가 붙지 않는다. 등록해둔 배포 도메인을
+  // Referer/Origin으로 명시적으로 실어 보낸다.
+  const registeredOrigin = `https://${url.hostname}`;
+
   try {
     const upstream = await fetch(vworldUrl.toString(), {
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        Referer: registeredOrigin + "/",
+        Origin: registeredOrigin,
+      },
       cf: { cacheTtl: 300, cacheEverything: true },
     });
     const body = await upstream.text();
@@ -65,10 +74,12 @@ async function handleVWorldProxy(request, env, url) {
         "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
         "Access-Control-Allow-Origin": "*",
         "Cache-Control": "public, max-age=300",
+        "X-Debug-Upstream-Status": String(upstream.status),
+        "X-Debug-Upstream-Url": vworldUrl.toString().replace(key, "***"),
       },
     });
   } catch (err) {
-    return jsonResponse({ error: "VWorld 요청 실패", detail: String(err) }, 502);
+    return jsonResponse({ error: "VWorld 요청 실패(네트워크/예외)", detail: String(err) }, 502);
   }
 }
 
