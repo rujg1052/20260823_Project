@@ -229,7 +229,7 @@
   <div class="layout">
     <div class="stage">
       <canvas id="map" aria-label="대한민국 지도. 드래그로 이동, 휠로 확대/축소, 클릭해서 정보를 봅니다."></canvas>
-      <div class="stage-hint" id="stageHint">왼쪽 드래그로 이동, 오른쪽 드래그로 회전·기울기, 휠로 확대·축소. 실측 건물 데이터가 있는 구까지 확대하면 건물이 나타나요 (현재 마포구, 순차 확장 중).</div>
+      <div class="stage-hint" id="stageHint">왼쪽 드래그로 이동, 오른쪽 드래그로 회전·기울기, 휠로 확대·축소. 실측 건물 데이터가 있는 구까지 확대하면 건물이 나타나요 (현재 11개 구 반영, 순차 확장 중).</div>
       <div class="district-loading" id="districtLoading" style="display:none;"></div>
       <div class="stage-legend" id="stageLegend" style="display:none;">
         <div class="title">역까지 도보 거리</div>
@@ -1341,31 +1341,40 @@ function pointInPolyXY(px,py,pts){
   }
   return inside;
 }
+// 지붕(옥상) 다각형만 클릭 판정을 하면, 기울어진 카메라에서는 지붕이 화면상 벽보다 위(카메라 쪽으로)로
+// 밀려 그려지기 때문에 실제로 눈에 보이는 "앞쪽 벽면"을 클릭했을 때는 아무 데도 안 걸리는 문제가 있었다
+// (그래서 안쪽/뒤쪽을 눌러야만 반응하는 것처럼 느껴짐). 지붕뿐 아니라 옆면(벽) 사각형들도 함께 검사해서,
+// 화면에 보이는 건물 실루엣 어디를 클릭해도 걸리도록 한다.
+function buildingHitTest(b, heightPx, sx, sy){
+  for(const ring of b.f){
+    const roofPts = ring.map(([lon,lat])=>project3(lon,lat,heightPx));
+    if(pointInPolyXY(sx,sy,roofPts)) return true;
+    if(heightPx>1.2){
+      const groundPts = ring.map(([lon,lat])=>project3(lon,lat,0));
+      for(let k=0;k<groundPts.length;k++){
+        const l=(k+1)%groundPts.length;
+        if(pointInPolyXY(sx,sy,[groundPts[k],groundPts[l],roofPts[l],roofPts[k]])) return true;
+      }
+    }
+  }
+  return false;
+}
 function handleClick(sx,sy){
   const ppm = currentPxPerMeter();
   const showBuildings = ppm > 0.12 && anyLoadedBboxIntersectsView(40);
   if(showBuildings){
-    // hit-test in screen space (roof silhouette), checking frontmost (largest depth) first to match what's drawn on top.
-    // 입체로 그려진(가까운) 건물부터 지붕 기준으로 먼저 검사하고, 못 찾으면 화면 가장자리의 평면 처리된 건물을 바닥 기준으로 검사한다.
+    // hit-test in screen space (roof + wall silhouette), checking frontmost (largest depth) first to match what's drawn on top.
+    // 입체로 그려진(가까운) 건물부터 지붕·벽 기준으로 먼저 검사하고, 못 찾으면 화면 가장자리의 평면 처리된 건물을 바닥 기준으로 검사한다.
     const { detailSet, flatSet } = buildingLOD(visibleBuildings());
     const items = buildingDepthSortedList(detailSet);
     let hit=null;
     for(let i=items.length-1;i>=0;i--){
       const b = items[i].b;
-      const heightPx = b.h*ppm;
-      for(const ring of b.f){
-        const roofPts = ring.map(([lon,lat])=>project3(lon,lat,heightPx));
-        if(pointInPolyXY(sx,sy,roofPts)){ hit=b; break; }
-      }
-      if(hit) break;
+      if(buildingHitTest(b, b.h*ppm, sx, sy)){ hit=b; break; }
     }
     if(!hit){
       for(const b of flatSet){
-        for(const ring of b.f){
-          const pts = ring.map(([lon,lat])=>project3(lon,lat,0));
-          if(pointInPolyXY(sx,sy,pts)){ hit=b; break; }
-        }
-        if(hit) break;
+        if(buildingHitTest(b, 0, sx, sy)){ hit=b; break; }
       }
     }
     if(hit){ selectBuilding(hit); return; }

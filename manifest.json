@@ -42,5 +42,71 @@
       "maxLat": 37.5702
     },
     "file": "seongdong.json"
+  },
+  {
+    "id": "dongjak",
+    "name": "동작구",
+    "bbox": {
+      "minLon": 126.9053,
+      "maxLon": 126.9872,
+      "minLat": 37.4726,
+      "maxLat": 37.5172
+    },
+    "file": "dongjak.json"
+  },
+  {
+    "id": "yeongdeungpo",
+    "name": "영등포구",
+    "bbox": {
+      "minLon": 126.8816,
+      "maxLon": 126.9525,
+      "minLat": 37.4822,
+      "maxLat": 37.5474
+    },
+    "file": "yeongdeungpo.json"
+  },
+  {
+    "id": "gwanak",
+    "name": "관악구",
+    "bbox": {
+      "minLon": 126.9016,
+      "maxLon": 126.9907,
+      "minLat": 37.4332,
+      "maxLat": 37.4922
+    },
+    "file": "gwanak.json"
+  },
+  {
+    "id": "seocho",
+    "name": "서초구",
+    "bbox": {
+      "minLon": 126.9822,
+      "maxLon": 127.0984,
+      "minLat": 37.4257,
+      "maxLat": 37.525
+    },
+    "file": "seocho.json"
+  },
+  {
+    "id": "gangnam",
+    "name": "강남구",
+    "bbox": {
+      "minLon": 127.014,
+      "maxLon": 127.1244,
+      "minLat": 37.4558,
+      "maxLat": 37.5361
+    },
+    "file": "gangnam.json"
+  },
+  {
+    "id": "songpa",
+    "name": "송파구",
+    "bbox": {
+      "minLon": 127.0686,
+      "maxLon": 127.1635,
+      "minLat": 37.4624,
+      "maxLat": 37.5407
+    },
+    "file": "songpa.json"
   }
 ]
