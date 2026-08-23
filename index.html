@@ -39,6 +39,9 @@
     --dist-far: #b0392f;
     --water: #5b93c9;
     --park: #5f9e6a;
+    --terrain-low: #ccd6b6;
+    --terrain-mid: #b2a066;
+    --terrain-high: #978d81;
     --road-fill: rgba(255,255,255,0.92);
     --road-casing: rgba(35,38,46,0.4);
     --path-line: rgba(255,255,255,0.75);
@@ -76,6 +79,9 @@
       --dist-far: #d97a63;
       --water: #4f7fb0;
       --park: #4f8a5c;
+      --terrain-low: #3b442f;
+      --terrain-mid: #55492c;
+      --terrain-high: #52504a;
       --road-fill: rgba(232,236,242,0.85);
       --road-casing: rgba(6,8,14,0.55);
       --path-line: rgba(232,236,242,0.6);
@@ -93,6 +99,7 @@
     --score-good: #5fa89a; --score-mid: #c9973f; --score-bad: #d97a63;
     --dist-near: #6fa8dc; --dist-far: #d97a63;
     --water: #4f7fb0; --park: #4f8a5c;
+    --terrain-low: #3b442f; --terrain-mid: #55492c; --terrain-high: #52504a;
     --road-fill: rgba(232,236,242,0.85); --road-casing: rgba(6,8,14,0.55);
     --path-line: rgba(232,236,242,0.6); --path-casing: rgba(6,8,14,0.4);
   }
@@ -479,6 +486,53 @@ function flatToLonLat(X, Y){
   return { lon: view.lon + X/(view.scale*COS_REF), lat: view.lat - Y/view.scale };
 }
 
+/* =================== 지형 기복(근사) =================== */
+// 실측 DEM(수치표고모델)을 이 세션에서 직접 받아올 방법이 없어서(네트워크 제한), 실제로 알려진 산 위치·정상
+// 높이를 기준점 삼아 완만한 언덕 모양(가우시안)으로 보간한 "근사 지형"이다. 등고선만큼 정밀하진 않지만, 서울의
+// 실제 지형 기복(어디가 높고 낮은지)은 꽤 정확하게 반영한다.
+const TERRAIN_BASELINE_M = 15; // 한강 변 등 저지대 기준 고도(대략)
+const TERRAIN_PEAKS = [
+  // n: 이름(참고용), lon/lat: 정상 좌표, h: 정상 높이(m), r: 완만하게 퍼지는 반경(m, 클수록 산자락이 넓게 퍼짐)
+  { n:'북한산', lon:126.9769, lat:37.6585, h:836, r:2200 },
+  { n:'인왕산', lon:126.9583, lat:37.5822, h:338, r:900 },
+  { n:'북악산', lon:126.9770, lat:37.6014, h:342, r:800 },
+  { n:'낙산',   lon:127.0074, lat:37.5807, h:125, r:450 },
+  { n:'남산',   lon:126.9882, lat:37.5512, h:262, r:750 },
+  { n:'관악산', lon:126.9646, lat:37.4423, h:632, r:1800 },
+  { n:'삼성산', lon:126.9282, lat:37.4544, h:480, r:1300 },
+  { n:'우면산', lon:127.0177, lat:37.4713, h:293, r:900 },
+  { n:'청계산', lon:127.0398, lat:37.4394, h:618, r:1500 },
+  { n:'대모산', lon:127.0700, lat:37.4783, h:293, r:800 },
+  { n:'구룡산', lon:127.0574, lat:37.4694, h:306, r:800 },
+  { n:'응봉산', lon:127.0186, lat:37.5507, h:93,  r:350 },
+  { n:'와우산', lon:126.9256, lat:37.5511, h:101, r:400 },
+  { n:'매봉산(용산)', lon:126.9793, lat:37.5350, h:108, r:400 },
+  { n:'국사봉', lon:126.9394, lat:37.4867, h:179, r:600 },
+];
+// project3()가 지형이 있는 모든 지점(도로 꼭짓점 하나하나까지) 마다 호출되므로, terrainHeightM()은
+// 매 프레임 수만 번 불릴 수 있는 아주 뜨거운 경로다 — 그래서 봉우리마다 "영향이 사실상 0이 되는 반경"
+// (cutR, 3*r) 바깥이면 삼각함수·exp 계산 없이 싼 사각형 비교만으로 건너뛰도록 미리 계산해둔다.
+for(const p of TERRAIN_PEAKS){
+  p.amp = p.h - TERRAIN_BASELINE_M;
+  p.twoR2 = 2*p.r*p.r;
+  const cutR = 3*p.r;
+  p.dLon = cutR/(111320*Math.cos(p.lat*RAD));
+  p.dLat = cutR/M_PER_DEG_LAT;
+  p.minLon = p.lon-p.dLon; p.maxLon = p.lon+p.dLon;
+  p.minLat = p.lat-p.dLat; p.maxLat = p.lat+p.dLat;
+}
+function terrainHeightM(lon, lat){
+  let h = TERRAIN_BASELINE_M;
+  for(const p of TERRAIN_PEAKS){
+    if(lon<p.minLon || lon>p.maxLon || lat<p.minLat || lat>p.maxLat) continue;
+    const dx = (lon-p.lon)*111320*COS_REF, dy = (lat-p.lat)*M_PER_DEG_LAT;
+    const d2 = dx*dx + dy*dy;
+    if(d2 > p.twoR2*4.5) continue; // 3*r을 조금 넘는 지점(=사실상 기여 0)은 exp까지 안 가고 정리
+    h += p.amp * Math.exp(-d2/p.twoR2);
+  }
+  return h;
+}
+
 /* ---- 카메라(회전·기울기) ---- */
 const camera = { yaw: 0, pitch: 0 }; // yaw: 좌우 회전(도), pitch: 0=수직 위에서 내려다봄, 값이 커질수록 기울어짐
 const PITCH_MAX = 70;
@@ -489,10 +543,11 @@ function applyCamera(X, Y, Z){
   const Yr = X*Math.sin(yawRad) + Y*Math.cos(yawRad);
   return { x: Xr, y: Yr*Math.cos(pitchRad) - Z*Math.sin(pitchRad) };
 }
-function invertCameraGround(sx, sy){
+// 지형이 평평하지 않으므로(z가 위치마다 다름) 화면 좌표를 되돌릴 때 그 지점의 지형 높이(zPx)를 함께 보정해줘야 한다.
+function invertCameraGround(sx, sy, zPx){
   const yawRad = camera.yaw*RAD, pitchRad = camera.pitch*RAD;
   const cospitch = Math.max(0.001, Math.cos(pitchRad));
-  const Xr = sx, Yr = sy/cospitch;
+  const Xr = sx, Yr = (sy + (zPx||0)*Math.sin(pitchRad))/cospitch;
   return { X: Xr*Math.cos(yawRad) + Yr*Math.sin(yawRad), Y: -Xr*Math.sin(yawRad) + Yr*Math.cos(yawRad) };
 }
 function screenDeltaToFlatDelta(dx, dy){
@@ -501,13 +556,23 @@ function screenDeltaToFlatDelta(dx, dy){
   const Xr = dx, Yr = dy/cospitch;
   return { X: Xr*Math.cos(yawRad) + Yr*Math.sin(yawRad), Y: -Xr*Math.sin(yawRad) + Yr*Math.cos(yawRad) };
 }
+// heightPx는 "지형 위로 추가되는 높이"(예: 건물 높이)만 넘기면 된다 — 지형 자체의 높이는 여기서 자동으로 더해진다.
 function project3(lon, lat, heightPx){
   const f = projectFlat(lon, lat, view);
-  return applyCamera(f.x, f.y, heightPx||0);
+  const groundPx = terrainHeightM(lon, lat) * (view.scale/M_PER_DEG_LAT);
+  return applyCamera(f.x, f.y, (heightPx||0) + groundPx);
 }
 function screenToLonLat(sx, sy){
-  const {X,Y} = invertCameraGround(sx,sy);
-  return flatToLonLat(X,Y);
+  // 지형이 평평하지 않아 한 번에 정확히 되돌릴 수 없다 — z=0으로 1차 추정한 뒤, 그 지점의 지형 높이로
+  // 보정해 두 번 더 반복한다(완만한 지형이라 이 정도면 충분히 수렴한다).
+  const first = invertCameraGround(sx,sy,0);
+  let ll = flatToLonLat(first.X, first.Y);
+  for(let i=0;i<2;i++){
+    const zPx = terrainHeightM(ll.lon, ll.lat) * (view.scale/M_PER_DEG_LAT);
+    const {X,Y} = invertCameraGround(sx,sy,zPx);
+    ll = flatToLonLat(X,Y);
+  }
+  return ll;
 }
 
 /* =================== 공간 인덱싱(그리드) =================== */
@@ -837,6 +902,72 @@ function drawPolyLayer(list, fillA, strokeA, fillColor, strokeColor, lw){
   ctx.globalAlpha=1;
 }
 
+/* ---- 지형 기복(근사) 시각화 ---- */
+// 화면에 보이는 범위를 고정된 개수의 격자로 나눠, 고도별 색(저지대→산 능선) + 방향광 음영으로 칠한다.
+// 격자 칸 "개수"를 고정해뒀기 때문에(칸 "크기"가 아니라) 줌 레벨과 무관하게 매 프레임 비용이 일정하다 —
+// 어차피 지형 모델 자체가 완만한 언덕 형태라 이 정도 해상도로도 충분히 매끄럽게 보인다.
+const TERRAIN_GRID_COLS = 44, TERRAIN_GRID_ROWS = 30;
+function terrainColorAt(hM, low, mid, high){
+  if(!low){ low = hexToRgb(cssColor('--terrain-low')); mid = hexToRgb(cssColor('--terrain-mid')); high = hexToRgb(cssColor('--terrain-high')); }
+  if(hM <= 250){
+    const t = Math.max(0, Math.min(1, (hM-TERRAIN_BASELINE_M)/(250-TERRAIN_BASELINE_M)));
+    return lerpRgb(low, mid, t);
+  }
+  const t = Math.max(0, Math.min(1, (hM-250)/(800-250)));
+  return lerpRgb(mid, high, t);
+}
+function drawTerrainMesh(){
+  const vb = getViewportLonLatBounds(300);
+  const cols = TERRAIN_GRID_COLS, rows = TERRAIN_GRID_ROWS;
+  const lonStep = (vb.maxLon-vb.minLon)/cols, latStep = (vb.maxLat-vb.minLat)/rows;
+  if(!(lonStep>0) || !(latStep>0)) return;
+  const cellWM = lonStep*111320*COS_REF, cellHM = latStep*M_PER_DEG_LAT;
+
+  // 격자 꼭짓점의 지형 높이·화면좌표를 꼭짓점당 한 번씩만 계산해서 인접 칸끼리 재사용한다.
+  const heights = [], pts = [];
+  for(let r=0;r<=rows;r++){
+    const hRow=[], pRow=[];
+    const lat = vb.minLat + r*latStep;
+    for(let c=0;c<=cols;c++){
+      const lon = vb.minLon + c*lonStep;
+      hRow.push(terrainHeightM(lon,lat));
+      pRow.push(project3(lon,lat,0));
+    }
+    heights.push(hRow); pts.push(pRow);
+  }
+
+  // 광원(관례적인 지도 음영 방향 — 좌상단에서 비스듬히 비춘다고 가정)
+  const lx=-0.45, ly=0.45, lz=0.77;
+  // 셀마다 CSS 변수를 다시 파싱하지 않도록 draw 1회당 한 번만 계산해서 재사용한다.
+  const terrLow = hexToRgb(cssColor('--terrain-low'));
+  const terrMid = hexToRgb(cssColor('--terrain-mid'));
+  const terrHigh = hexToRgb(cssColor('--terrain-high'));
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      const hTL=heights[r+1][c], hTR=heights[r+1][c+1], hBL=heights[r][c], hBR=heights[r][c+1];
+      const hAvg = (hTL+hTR+hBL+hBR)/4;
+      const dHdx = ((hTR+hBR)-(hTL+hBL))/(2*cellWM);
+      const dHdy = ((hTL+hTR)-(hBL+hBR))/(2*cellHM);
+      let nx=-dHdx, ny=-dHdy, nz=1;
+      const nlen=Math.sqrt(nx*nx+ny*ny+nz*nz)||1; nx/=nlen; ny/=nlen; nz/=nlen;
+      let shade = nx*lx+ny*ly+nz*lz;
+      shade = Math.max(0.6, Math.min(1.3, shade+0.4));
+
+      const base = terrainColorAt(hAvg, terrLow, terrMid, terrHigh);
+      let rr=base.r, gg=base.g, bb=base.b;
+      if(shade<1){ const t=1-shade; rr*=(1-t*0.35); gg*=(1-t*0.35); bb*=(1-t*0.35); }
+      else { const t=Math.min(1,shade-1); rr+=(255-rr)*t*0.3; gg+=(255-gg)*t*0.3; bb+=(255-bb)*t*0.3; }
+
+      const p00=pts[r][c], p10=pts[r][c+1], p11=pts[r+1][c+1], p01=pts[r+1][c];
+      ctx.beginPath();
+      ctx.moveTo(p00.x,p00.y); ctx.lineTo(p10.x,p10.y); ctx.lineTo(p11.x,p11.y); ctx.lineTo(p01.x,p01.y);
+      ctx.closePath();
+      ctx.fillStyle = `rgb(${rr|0},${gg|0},${bb|0})`;
+      ctx.fill();
+    }
+  }
+}
+
 function draw(){
   clampView();
   _cssColorCache.clear();
@@ -851,6 +982,9 @@ function draw(){
 
   // provinces base
   drawPolyLayer(PROVINCES, 1, 0.9, cssColor('--sphere-a'), cssColor('--rule'), 1);
+  // 지형 기복(근사) — 평평한 땅 색 위에 고도별 색+음영으로 덮어 그린다. 역세권 히트맵이 켜지면 그 위를
+  // 불투명하게 덮어버리므로(의도적으로 그렇게 만들었다), 지형은 주로 건물이 보이기 전, 도시 전체를 둘러볼 때 드러난다.
+  drawTerrainMesh();
 
   const showGu = view.scale > fitScale*3.2;
   const showDong = view.scale > fitScale*14;
@@ -981,28 +1115,32 @@ function drawRoads(){
   const byClass = { major:[], mid:[], service:[], path:[] };
   // 화면상 폭이 1px에도 못 미치는 도로는 어차피 안 보이므로 그리기 전에 걸러낸다 (축소된 상태에서 특히 큰 절약).
   for(const r of visibleRoads()){ if((ROAD_WIDTH_M[r.t]||3)*ppm < 0.6) continue; (byClass[r.t]||byClass.service).push(r); }
+  // 도로를 한 줄기씩(케이싱+채움 2번씩) stroke()하면 개수가 많을 때(수천 개) 그 자체가 큰 병목이 된다 —
+  // 같은 클래스(major/mid/service/path)의 도로 전부를 하나의 경로로 모아, 클래스당 stroke() 2번만 부른다.
+  // (클래스 안에서는 폭·색이 전부 동일해서, 경로만 합쳐도 결과는 기존과 똑같다.)
   for(const cls of order){
-    for(const r of byClass[cls]){
-      const wPx = Math.max(1, (ROAD_WIDTH_M[r.t]||3) * ppm);
+    const roads = byClass[cls];
+    if(!roads.length) continue;
+    const wPx = Math.max(1, (ROAD_WIDTH_M[cls]||3) * ppm);
+    const dash = cls==='path';
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if(dash) ctx.setLineDash([wPx*1.6, wPx*1.4]);
+
+    ctx.beginPath();
+    for(const r of roads){
       const pts = r.p.map(([lon,lat])=>project3(lon,lat,0));
-      const dash = cls==='path';
-      ctx.save();
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      if(dash) ctx.setLineDash([wPx*1.6, wPx*1.4]);
-      // casing (outline)
-      ctx.strokeStyle = casingColor[r.t];
-      ctx.lineWidth = wPx + (dash? 1 : 2);
-      ctx.beginPath();
       pts.forEach((p,i)=> i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
-      ctx.stroke();
-      // fill (inner line)
-      ctx.strokeStyle = fillColor[r.t];
-      ctx.lineWidth = wPx;
-      ctx.beginPath();
-      pts.forEach((p,i)=> i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
-      ctx.stroke();
-      ctx.restore();
     }
+    // casing (outline)
+    ctx.strokeStyle = casingColor[cls];
+    ctx.lineWidth = wPx + (dash? 1 : 2);
+    ctx.stroke();
+    // fill (inner line) — 같은 경로를 재사용해서 한 번 더 얇게 긋는다
+    ctx.strokeStyle = fillColor[cls];
+    ctx.lineWidth = wPx;
+    ctx.stroke();
+    ctx.restore();
   }
 }
 
@@ -1045,9 +1183,10 @@ function buildingLOD(candidates){
     flatSet: withDist.slice(BUILDING_DETAIL_MAX).map(x=>x.b),
   };
 }
-function drawFlatBuildingFootprint(b){
+// 화면 가장자리의(먼) 건물들: 채우기만 즉시 하고, 테두리는 그룹별로 모아뒀다가 draw 호출부에서 한 번에 긋는다
+// (개수가 수천~수만까지 갈 수 있어서, 건물마다 stroke()를 부르면 그 자체가 병목이 된다).
+function drawFlatBuildingFootprint(b, edgeBatches){
   const base = groupColor(b.g);
-  const edge = darken(base, 0.5);
   for(const ring of b.f){
     const pts = ring.map(([lon,lat])=>project3(lon,lat,0));
     ctx.beginPath();
@@ -1056,7 +1195,7 @@ function drawFlatBuildingFootprint(b){
     ctx.fillStyle = base;
     ctx.fill();
     // 테두리가 없으면 완전 위(pitch 0)에서 봤을 때 같은 색 건물끼리 경계 없이 뭉쳐 보인다 — 얇은 테두리로 구분한다.
-    ctx.lineWidth=1; ctx.strokeStyle=edge; ctx.globalAlpha=0.5; ctx.stroke(); ctx.globalAlpha=1;
+    (edgeBatches[b.g] || (edgeBatches[b.g]=[])).push(pts);
   }
 }
 const BUILDING_DETAIL_MAX = 3000;
@@ -1067,7 +1206,18 @@ function drawBuildings(){
 
   if(flatSet.length){
     // 화면 가장자리의, 지금 보고 있는 지점에서 먼 건물들: 벽 돌출·그림자 계산 없이 바닥 색 다각형만 채운다.
-    for(const b of flatSet) drawFlatBuildingFootprint(b);
+    const flatEdgeBatches = {};
+    for(const b of flatSet) drawFlatBuildingFootprint(b, flatEdgeBatches);
+    for(const g in flatEdgeBatches){
+      ctx.beginPath();
+      for(const pts of flatEdgeBatches[g]){
+        pts.forEach((p,i)=> i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+        ctx.closePath();
+      }
+      ctx.lineWidth=1; ctx.strokeStyle=darken(groupColor(g),0.5); ctx.globalAlpha=0.5;
+      ctx.stroke();
+      ctx.globalAlpha=1;
+    }
   }
   if(!detailSet.length) return;
 
@@ -1086,19 +1236,25 @@ function drawBuildings(){
     shadowVec = { dxPerM: Math.sin(bearingRad)*lenM_perM, dyPerM: -Math.cos(bearingRad)*lenM_perM };
   }
 
+  // 지붕 테두리를 건물마다 즉시 stroke()하면(수천 개) 캔버스 호출 자체가 큰 병목이 된다 — 그래서 일반
+  // 건물의 테두리는 그룹(용도)별로 모아뒀다가 맨 마지막에 그룹당 한 번씩만 stroke()한다. 선택된 건물·검색
+  // 강조 건물처럼 색이 특별한 경우만 그 자리에서 바로 그린다(수가 아주 적어서 문제되지 않는다).
+  const roofEdgeBatches = {};
   for(const {b} of items){
     const selectedBuilding = state.selection && state.selection.type==='building' && state.selection.b===b;
     const base = groupColor(b.g);
     for(const ring of b.f){
       const flat = ring.map(([lon,lat])=>projectFlat(lon,lat,view));
-      const ground = flat.map(f=>applyCamera(f.x,f.y,0));
+      // 건물이 서 있는 지점의 지형 높이(픽셀) — 바닥과 지붕 모두에 더해줘야 건물이 지형 위에 올바르게 얹힌다.
+      const groundZ = ring.map(([lon,lat])=>terrainHeightM(lon,lat)*ppm);
+      const ground = flat.map((f,idx)=>applyCamera(f.x,f.y,groundZ[idx]));
       const heightPx = b.h*ppm;
-      const roof = flat.map(f=>applyCamera(f.x,f.y,heightPx));
+      const roof = flat.map((f,idx)=>applyCamera(f.x,f.y,groundZ[idx]+heightPx));
 
       // cast shadow polygon (convex hull of footprint + shifted footprint), on the ground plane
       if(shadowVec && heightPx>1.2){
         const offX = shadowVec.dxPerM*b.h*ppm, offY = shadowVec.dyPerM*b.h*ppm;
-        const shifted = flat.map(f=>applyCamera(f.x+offX,f.y+offY,0));
+        const shifted = flat.map((f,idx)=>applyCamera(f.x+offX,f.y+offY,groundZ[idx]));
         const hull = convexHull(ground.concat(shifted));
         if(hull.length>=3){
           ctx.beginPath();
@@ -1110,11 +1266,13 @@ function drawBuildings(){
       }
 
       const wall = darken(base, 0.35);
-      const edge = darken(base, 0.55); // 지붕·벽 테두리용 — 인접 건물이 같은 색이어도 경계가 보이게 한다.
+      const edge = darken(base, 0.55); // 지붕 테두리용 — 인접 건물이 같은 색이어도 경계가 보이게 한다.
 
+      // 벽면(옆면) 자체는 지붕보다 어둡게 채워서 이미 옆 건물과 구분되고, 기울인 화면에서는 원근상 잘 보이지
+      // 않는 부분이라 개별 사각형마다 테두리(stroke)를 긋지 않는다 — 그렇게 하면 건물이 조금만 많아져도
+      // 매우 느려진다(사각형 하나당 stroke 호출이 하나씩 더 붙는 셈이라 배 이상 느려짐).
       if(heightPx>1.2){
         ctx.fillStyle = wall;
-        ctx.strokeStyle = edge; ctx.lineWidth = 1;
         for(let i=0;i<ground.length;i++){
           const j=(i+1)%ground.length;
           ctx.beginPath();
@@ -1124,7 +1282,6 @@ function drawBuildings(){
           ctx.lineTo(roof[i].x, roof[i].y);
           ctx.closePath();
           ctx.fill();
-          ctx.globalAlpha=0.5; ctx.stroke(); ctx.globalAlpha=1;
         }
       }
       ctx.beginPath();
@@ -1136,8 +1293,18 @@ function drawBuildings(){
       // 같은 색 건물끼리 뭉쳐 하나로 보인다 — 선택/역세권 강조가 아닌 평소에도 옅은 테두리를 항상 그린다.
       if(selectedBuilding){ ctx.lineWidth=2; ctx.strokeStyle=cssColor('--text'); ctx.stroke(); }
       else if(b.s){ ctx.lineWidth=1; ctx.strokeStyle=cssColor('--dist-near'); ctx.globalAlpha=0.6; ctx.stroke(); ctx.globalAlpha=1; }
-      else { ctx.lineWidth=1; ctx.strokeStyle=edge; ctx.globalAlpha=0.55; ctx.stroke(); ctx.globalAlpha=1; }
+      else { (roofEdgeBatches[b.g] || (roofEdgeBatches[b.g]=[])).push(roof); }
     }
+  }
+  for(const g in roofEdgeBatches){
+    ctx.beginPath();
+    for(const roof of roofEdgeBatches[g]){
+      roof.forEach((p,i)=> i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+      ctx.closePath();
+    }
+    ctx.lineWidth=1; ctx.strokeStyle=darken(groupColor(g),0.55); ctx.globalAlpha=0.55;
+    ctx.stroke();
+    ctx.globalAlpha=1;
   }
 }
 function roundRectPath(x,y,w,h,r){
