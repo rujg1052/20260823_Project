@@ -669,7 +669,7 @@ const loadingDistrictIds = new Set();
 
 async function loadDistrictManifest(){
   try{
-    const res = await fetch('data/manifest.json', { cache: 'no-store' });
+    const res = await fetch('manifest.json', { cache: 'no-store' });
     if(res.ok) DISTRICTS_MANIFEST = await res.json();
   } catch(err){
     console.warn('구 목록(manifest.json) 로드 실패 — 마포구 데이터만 표시됩니다.', err);
@@ -741,7 +741,7 @@ function districtLabel(id){
 let SEARCH_INDEX = [];
 async function loadSearchIndex(){
   try{
-    const res = await fetch('data/search_index.json', { cache: 'force-cache' });
+    const res = await fetch('search_index.json', { cache: 'force-cache' });
     if(res.ok) SEARCH_INDEX = await res.json();
   }catch(err){
     console.warn('검색 인덱스 로드 실패', err);

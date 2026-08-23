@@ -8,7 +8,7 @@
       "minLat": 37.5631,
       "maxLat": 37.6295
     },
-    "file": "data/jongno.json"
+    "file": "jongno.json"
   },
   {
     "id": "jung",
@@ -19,7 +19,7 @@
       "minLat": 37.541,
       "maxLat": 37.5689
     },
-    "file": "data/jung.json"
+    "file": "jung.json"
   },
   {
     "id": "yongsan",
@@ -30,7 +30,7 @@
       "minLat": 37.5093,
       "maxLat": 37.5522
     },
-    "file": "data/yongsan.json"
+    "file": "yongsan.json"
   },
   {
     "id": "seongdong",
@@ -41,6 +41,6 @@
       "minLat": 37.5263,
       "maxLat": 37.5702
     },
-    "file": "data/seongdong.json"
+    "file": "seongdong.json"
   }
 ]
